@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Agentic Chat Demo</title>
+  <style>
+    :root {
+      --bg: #f7f8fa;
+      --card-bg: #ffffff;
+      --user-bg: #e3e7eb;
+      --agent-bg: #f0f2f5;
+      --tool-bg: #fff8e5;
+      --response-bg: #e7f4ea;
+      --text: #1a1a1a;
+      --subtext: #666;
+      --border: #ddd;
+      --accent: #0078d7;
+      --radius: 10px;
+      --font: "Inter", system-ui, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: var(--font);
+      background-color: var(--bg);
+      color: var(--text);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 800px;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
+      display: flex;
+      flex-direction: column;
+      height: 85vh;
+      overflow: hidden;
+    }
+
+    .header {
+      padding: 1rem 1.5rem;
+      border-bottom: 1px solid var(--border);
+      font-weight: 600;
+      color: var(--accent);
+      background: #fafafa;
+    }
+
+    .messages {
+      flex: 1;
+      padding: 1rem 1.5rem;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      scroll-behavior: smooth;
+    }
+
+    .message {
+      padding: 0.75rem 1rem;
+      border-radius: var(--radius);
+      line-height: 1.5;
+      max-width: 90%;
+      word-wrap: break-word;
+    }
+
+    .user {
+      align-self: flex-end;
+      background: var(--user-bg);
+    }
+
+    .reasoning {
+      align-self: flex-start;
+      background: var(--agent-bg);
+      font-style: italic;
+      font-size: 0.95rem;
+      color: var(--subtext);
+    }
+
+    .tool {
+      align-self: flex-start;
+      background: var(--tool-bg);
+      color: #665a00;
+      border: 1px solid #f0d98c;
+    }
+
+    .response {
+      align-self: flex-start;
+      background: var(--response-bg);
+      border: 1px solid #b5e2b9;
+      font-weight: 500;
+    }
+
+    .footer {
+      padding: 1rem;
+      border-top: 1px solid var(--border);
+      display: flex;
+      gap: 0.5rem;
+    }
+
+    input {
+      flex: 1;
+      padding: 0.75rem 1rem;
+      font-size: 1rem;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      outline: none;
+    }
+
+    input:focus {
+      border-color: var(--accent);
+    }
+
+    button {
+      background: var(--accent);
+      color: white;
+      border: none;
+      padding: 0.75rem 1.5rem;
+      border-radius: var(--radius);
+      font-size: 1rem;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    button:hover {
+      background: #005a9e;
+    }
+
+    @media (max-width: 600px) {
+      .container {
+        height: 90vh;
+        border-radius: 0;
+      }
+      .messages {
+        padding: 1rem;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">🧠 Agentic Chat Demo</div>
+
+    <div id="messages" class="messages">
+      <div class="message reasoning">Awaiting your query...</div>
+    </div>
+
+    <div class="footer">
+      <input id="query" type="text" placeholder="Ask something (e.g. 'MacBook Air M3 specs')" />
+      <button id="sendBtn">Send</button>
+    </div>
+  </div>
+
+  <script>
+    const sendBtn = document.getElementById("sendBtn");
+    const queryInput = document.getElementById("query");
+    const messages = document.getElementById("messages");
+
+    function addMessage(type, content) {
+      const div = document.createElement("div");
+      div.className = `message ${type}`;
+      div.textContent = content;
+      messages.appendChild(div);
+      messages.scrollTop = messages.scrollHeight;
+    }
+
+    async function sendQuery() {
+      const query = queryInput.value.trim();
+      if (!query) return;
+
+      addMessage("user", query);
+      queryInput.value = "";
+
+      const response = await fetch("/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query }),
+      });
+
+      if (!response.ok) {
+        addMessage("response", `Error: ${response.status}`);
+        return;
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder("utf-8");
+      let buffer = "";
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop();
+
+        for (const part of parts) {
+          if (!part.startsWith("data:")) continue;
+          try {
+            const event = JSON.parse(part.replace(/^data:\s*/, ""));
+            if (event.type === "reasoning") {
+              addMessage("reasoning", event.content);
+            } else if (event.type === "tool_call") {
+              const msg = event.output
+                ? `🛠️ ${event.tool} → ${event.output}`
+                : `🛠️ ${event.tool} (invoking...)`;
+              addMessage("tool", msg);
+            } else if (event.type === "response") {
+              addMessage("response", `💡 ${event.content}`);
+            }
+          } catch (err) {
+            console.error("JSON parse error:", err);
+          }
+        }
+      }
+    }
+
+    sendBtn.onclick = sendQuery;
+    queryInput.addEventListener("keypress", (e) => {
+      if (e.key === "Enter") sendQuery();
+    });
+  </script>
+</body>
+</html>

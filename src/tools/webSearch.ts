@@ -1,7 +1,40 @@
-// Simulated search. Replace with real API call if you have a key.
+import fetch from "node-fetch";
+import dotenv from "dotenv";
+
+dotenv.config();
 export async function webSearch(query: string): Promise<string> {
-  // If you have SerpAPI / Bing, implement fetch here
-  // For now return canned HTML/text to show the flow
-  await new Promise(r => setTimeout(r, 500)); // simulate latency
-  return `SIMULATED_SEARCH_RESULTS_FOR: ${query}\n- SourceA: summary line 1\n- SourceB: summary line 2`;
+  const apiKey = process.env.SERPER_API_KEY;
+  if (!apiKey) {
+    console.error("Missing SERPER_API_KEY in .env");
+    return "Search tool is not configured (missing API key).";
+  }
+
+  try {
+    const res = await fetch("https://google.serper.dev/search", {
+      method: "POST",
+      headers: {
+        "X-API-KEY": apiKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ q: query }),
+    });
+
+    const data = await res.json();
+
+    if (!data.organic || data.organic.length === 0) {
+      return "No search results found.";
+    }
+
+    // Format the top few results into a readable summary
+    const results = data.organic.slice(0, 5)
+      .map((r: any, i: number) =>
+        `${i + 1}. ${r.title}\n${r.snippet}\nSource: ${r.link}`
+      )
+      .join("\n\n");
+
+    return `Here are some relevant search results:\n\n${results}`;
+  } catch (err) {
+    console.error("Serper search error:", err);
+    return "Web search failed. Please try again later.";
+  }
 }

@@ -1,24 +1,93 @@
-import { webSearch } from './tools/webSearch';
-import { StreamEvent } from './types';
+import { GoogleGenerativeAI } from "@google/generative-ai";
+import { webSearch } from "./tools/webSearch";
+import { StreamEvent } from "./types";
+import dotenv from "dotenv";
 
-export async function runAgent(query: string, sendEvent: (e: StreamEvent) => Promise<void>) {
-  // 1) initial thought
-  await sendEvent({ type: 'reasoning', content: 'Reading the user query and considering what is needed.' });
+dotenv.config();
+// Initialize Gemini client (uses GEMINI_API_KEY from env)
+if (!process.env.GEMINI_API_KEY) {
+  throw new Error("Missing GEMINI_API_KEY in environment variables");
+}
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
 
-  // 2) simple heuristic: if query contains "state of" or "2025" -> do web search (demo heuristic)
-  const needTool = /202\d|state of|latest|today|recent|updates?/i.test(query);
+// Get the model you want to use
+const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
-  if (needTool) {
-    const toolInput = query;
-    await sendEvent({ type: 'tool_call', tool: 'web_search', input: toolInput });
-    const output = await webSearch(toolInput);
-    await sendEvent({ type: 'tool_call', tool: 'web_search', input: toolInput, output });
+export async function runAgent(
+  query: string,
+  sendEvent: (e: StreamEvent) => Promise<void>
+) {
+  await sendEvent({
+    type: "reasoning",
+    content: "Analyzing query intent and deciding if a web search is needed...",
+  });
+
+  // Step 1: Decide whether a web search is needed
+  const decidePrompt = `
+You are a reasoning AI assistant that decides whether a web search is needed.
+User asked: "${query}"
+If the question is about "latest", "current", "2025", "today", or "recent", respond ONLY with "search".
+Otherwise respond ONLY with "no".
+`;
+
+  // ✅ FIXED: Call generateContent on the model
+  const decideResult = await model.generateContent(decidePrompt);
+  const decideResp = decideResult.response;
+  const decision = decideResp.text().trim().toLowerCase();
+  const needsSearch = decision.includes("search");
+
+  let searchResults = "";
+
+  if (needsSearch) {
+    await sendEvent({ type: "tool_call", tool: "web_search", input: query });
+    searchResults = await webSearch(query);
+    await sendEvent({
+      type: "tool_call",
+      tool: "web_search",
+      input: query,
+      output: searchResults,
+    });
   } else {
-    await sendEvent({ type: 'reasoning', content: 'No external data required; proceeding from knowledge.' });
+    await sendEvent({
+      type: "reasoning",
+      content: "No external data required; proceeding from internal knowledge.",
+    });
   }
 
-  // 3) produce final answer (synthesis). You would call an LLM here with context.
-  // For demo: synthesize from tool output if present; in real, call LLM with tool output prepended.
-  const final = `FINAL ANSWER (demo): For your query "${query}", I checked sources and synthesized an answer.`;
-  await sendEvent({ type: 'response', content: final });
+  // Step 2: Generate final answer using streaming
+  await sendEvent({
+    type: "reasoning",
+    content: "Synthesizing final response...",
+  });
+
+  const finalPrompt = `
+User question: ${query}
+
+${
+    needsSearch
+      ? `Here are some web search results:\n${searchResults}`
+      : "No external sources were used."
+  }
+
+Provide a concise, factual, well-written explanation (under 200 words).
+`;
+
+  // ✅ FIXED: Call generateContentStream on the model
+  const streamResult = await model.generateContentStream(finalPrompt);
+
+  let fullText = "";
+  // ✅ FIXED: Iterate over streamResult.stream
+  for await (const chunk of streamResult.stream) {
+    const text = chunk.text();
+    if (text) {
+      fullText += text;
+      await sendEvent({ type: "reasoning", content: text });
+    }
+  }
+
+  // ✅ FIXED: Get final response from streamResult.response
+  const finalResponse = await streamResult.response;
+  const fullAnswer = finalResponse.text();
+
+  await sendEvent({ type: "response", content: fullAnswer });
 }
