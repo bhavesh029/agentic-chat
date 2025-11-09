@@ -1,7 +1,6 @@
 import fetch from "node-fetch";
-import dotenv from "dotenv";
+import "../dotenv.config";
 
-dotenv.config();
 export async function webSearch(query: string): Promise<string> {
   const apiKey = process.env.SERPER_API_KEY;
   if (!apiKey) {
@@ -25,7 +24,6 @@ export async function webSearch(query: string): Promise<string> {
       return "No search results found.";
     }
 
-    // Format the top few results into a readable summary
     const results = data.organic.slice(0, 5)
       .map((r: any, i: number) =>
         `${i + 1}. ${r.title}\n${r.snippet}\nSource: ${r.link}`
@@ -35,6 +33,6 @@ export async function webSearch(query: string): Promise<string> {
     return `Here are some relevant search results:\n\n${results}`;
   } catch (err) {
     console.error("Serper search error:", err);
-    return "Web search failed. Please try again later.";
+    return "Web search failed.";
   }
 }
